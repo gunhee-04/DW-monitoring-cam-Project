@@ -12,7 +12,7 @@ app = Flask(__name__)
 # =========================
 # 설정
 # =========================
-PC1_VIDEO_URL = "http://192.168.0.9:5000/video"
+PC1_VIDEO_URL = "http://192.168.0.21:5000/video"
 PC3_API_URL   = "http://192.168.0.9:8090/api/detection"
 
 CAMERA_ID = "CAM-01"
