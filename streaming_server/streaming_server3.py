@@ -12,6 +12,7 @@ app = Flask(__name__)
 # =========================
 # 서버 설정
 # =========================
+SPRING_CONFIG_URL = "http://localhost:8081/api/cameras/{cameraCode}/config"
 PC3_API_URL = "http://192.168.0.28:8081/api/detection"
 
 SOURCES = {
@@ -21,7 +22,7 @@ SOURCES = {
 }
 
 CAMERA_MAP = {
-    "webcam": "CAM-01",
+    "webcam": "CAM-02",
     "drone1": "CAM-02",
     "drone2": "CAM-03"
 }
@@ -68,16 +69,77 @@ snapshot_saved_ids = set()
 os.makedirs("intrusion_snapshots", exist_ok=True)
 
 # =========================
+# Spring 설정 조회
+# =========================
+def load_camera_config(camera_code):
+    """
+    Spring Boot 에서 카메라 설정 조회
+    기대 응답 형식:
+    {
+        "intrusionSeconds": 3,
+        "roi": {
+            "x1": 100,
+            "y1": 100,
+            "x2": 500,
+            "y2": 400
+        }
+    }
+    """
+    try:
+        url = SPRING_CONFIG_URL.format(cameraCode=camera_code)
+        r = requests.get(url, timeout=3)
+
+        print(f"[설정 조회 요청] {url}")
+        print(f"[설정 조회 응답코드] {r.status_code}")
+        print(f"[설정 조회 응답본문] {r.text}")
+
+        r.raise_for_status()
+        data = r.json()
+
+        intrusion_time = int(data["intrusionSeconds"])
+        roi = data["roi"]
+
+        roi_x1 = int(roi["x1"])
+        roi_y1 = int(roi["y1"])
+        roi_x2 = int(roi["x2"])
+        roi_y2 = int(roi["y2"])
+
+        return intrusion_time, roi_x1, roi_y1, roi_x2, roi_y2
+
+    except Exception as e:
+        print(f"[설정 로드 실패] {e}")
+        # 기본값 fallback
+        return 3, 100, 100, 500, 400
+
+
+# =========================
 # 유틸
 # =========================
+def apply_camera_config(camera_id):
+    """Spring 설정값을 읽어서 전역 ROI/침입시간에 반영"""
+    global INTRUSION_TIME, ROI_POLYGON, roi_ready
+
+    intrusion_time, x1, y1, x2, y2 = load_camera_config(camera_id)
+    INTRUSION_TIME = intrusion_time
+    ROI_POLYGON = np.array([
+        (x1, y1),
+        (x2, y1),
+        (x2, y2),
+        (x1, y2)
+    ], np.int32)
+    roi_ready = True
+
+    print(
+        f"[설정 적용 완료] camera={camera_id} / "
+        f"intrusion={INTRUSION_TIME}s / roi=({x1},{y1})~({x2},{y2})"
+    )
+
+
 def reset_detection_state():
-    global ROI_POLYGON, roi_ready
     intruded_ids.clear()
     current_intruded_ids.clear()
     intrusion_enter_time.clear()
     snapshot_saved_ids.clear()
-    ROI_POLYGON = None
-    roi_ready = False
 
 
 def encode_image(frame):
@@ -136,11 +198,17 @@ def send_detection_data(frame, people_count):
 
 
 # =========================
+# 시작 시 최초 설정 적용
+# =========================
+apply_camera_config(CAMERA_ID)
+
+
+# =========================
 # 소스 전환 API
 # =========================
 @app.route("/switch/<source>")
 def switch_source(source):
-    global cap, CURRENT_SOURCE, CAMERA_ID
+    global cap, CURRENT_SOURCE, CAMERA_ID, frame_count, last_sent_time
 
     if source not in SOURCES:
         return f"invalid source: {source}", 400
@@ -150,10 +218,30 @@ def switch_source(source):
 
     cap.release()
     cap = cv2.VideoCapture(SOURCES[source])
+
+    frame_count = 0
+    last_sent_time = 0
     reset_detection_state()
+
+    # 핵심: 소스 바뀌면 카메라 코드도 바뀌므로 Spring 설정 다시 읽기
+    apply_camera_config(CAMERA_ID)
 
     print(f"[소스 변경] {source} / CAMERA_ID={CAMERA_ID}")
     return f"switched to {source}"
+
+
+# =========================
+# 설정 수동 새로고침 API
+# =========================
+@app.route("/reload-config")
+def reload_config():
+    reset_detection_state()
+    apply_camera_config(CAMERA_ID)
+    return {
+        "status": "ok",
+        "cameraId": CAMERA_ID,
+        "intrusionTime": INTRUSION_TIME
+    }
 
 
 # =========================
@@ -174,7 +262,8 @@ def gen_frames():
                 time.sleep(0.05)
                 continue
 
-        if not roi_ready:
+        # 혹시 설정 로딩 실패 등으로 ROI가 없으면 중앙 기본값 생성
+        if not roi_ready or ROI_POLYGON is None:
             h, w = frame.shape[:2]
             roi_w = int(w * 0.5)
             roi_h = int(h * 0.5)
@@ -191,7 +280,7 @@ def gen_frames():
             ], np.int32)
 
             roi_ready = True
-            print("[ROI] 화면 중앙 영역 설정 완료")
+            print("[ROI] 기본 중앙 영역 설정 완료")
 
         frame_count += 1
 
