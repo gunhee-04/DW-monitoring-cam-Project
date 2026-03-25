@@ -4,13 +4,13 @@ import requests
 import time
 from ultralytics import YOLO
 import base64
-import numpy as np
 import os
+import numpy as np
 
 app = Flask(__name__)
 
 # =========================
-# 설정
+# 서버 설정
 # =========================
 PC3_API_URL = "http://192.168.0.144:8081/api/detection"
 
@@ -79,14 +79,19 @@ def reset_detection_state():
     ROI_POLYGON = None
     roi_ready = False
 
+
 def encode_image(frame):
-    _, buffer = cv2.imencode(".jpg", frame)
+    success, buffer = cv2.imencode(".jpg", frame)
+    if not success:
+        return None
     return base64.b64encode(buffer).decode("utf-8")
+
 
 def save_snapshot(frame, track_id):
     filename = f"intrusion_snapshots/intrusion_{track_id}_{int(time.time())}.jpg"
     cv2.imwrite(filename, frame)
     print(f"[침입 스냅샷 저장] {filename}")
+
 
 def send_detection_data(frame, people_count):
     global CAMERA_ID
@@ -108,6 +113,8 @@ def send_detection_data(frame, people_count):
     else:
         return
 
+    image_base64 = encode_image(frame)
+
     payload = {
         "cameraId": CAMERA_ID,
         "eventType": event_type,
@@ -116,16 +123,17 @@ def send_detection_data(frame, people_count):
         "stayDurationSec": stay_duration_sec,
         "message": message,
         "eventTime": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "image": None
+        "image": image_base64
     }
 
     print("[전송 payload]", payload)
 
     try:
         r = requests.post(PC3_API_URL, json=payload, timeout=2)
-        print(f"[PC2] PC3 전송 성공: {r.status_code}")
+        print(f"[전송 성공] {r.status_code}")
     except Exception as e:
-        print(f"[PC2] PC3 전송 실패: {e}")
+        print(f"[전송 실패] {e}")
+
 
 # =========================
 # 소스 전환 API
@@ -146,6 +154,7 @@ def switch_source(source):
 
     print(f"[소스 변경] {source} / CAMERA_ID={CAMERA_ID}")
     return f"switched to {source}"
+
 
 # =========================
 # 스트리밍
@@ -275,6 +284,24 @@ def gen_frames():
             (0, 255, 0),
             2
         )
+        cv2.putText(
+            annotated_frame,
+            f"Intrusion(Now): {len(current_intruded_ids)}",
+            (30, 120),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 0, 255),
+            2
+        )
+        cv2.putText(
+            annotated_frame,
+            f"Intrusion(Total): {len(intruded_ids)}",
+            (30, 160),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 0, 255),
+            2
+        )
 
         now = time.time()
         if now - last_sent_time >= SEND_INTERVAL:
@@ -292,9 +319,11 @@ def gen_frames():
             b"\r\n"
         )
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/video")
 def video():
@@ -302,6 +331,7 @@ def video():
         gen_frames(),
         mimetype="multipart/x-mixed-replace; boundary=frame"
     )
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, threaded=True)
