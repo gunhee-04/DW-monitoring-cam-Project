@@ -24,7 +24,7 @@ SOURCES = {
 CAMERA_MAP = {
     "webcam": "CAM-02",
     "drone1": "CAM-02",
-    "drone2": "CAM-03"
+    "drone2": "CAM-02"
 }
 
 CURRENT_SOURCE = "webcam"
