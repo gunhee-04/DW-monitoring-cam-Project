@@ -14,10 +14,10 @@ app = Flask(__name__)
 # 서버 설정
 # =========================
 SPRING_CONFIG_URL = "http://localhost:8081/api/cameras/{cameraCode}/config"
-PC3_API_URL = "http://192.168.0.28:8081/api/detection"
+PC3_API_URL = "http://192.168.0.144:8081/api/events"
 
 SOURCES = {
-    "webcam": "http://192.168.0.28:5000/video",   # 기존 웹캠 송출 Flask(MJPEG)
+    "webcam": "http://192.168.0.144:5000/video",   # 기존 웹캠 송출 Flask(MJPEG)
     "drone1": "videos/crowd1.mp4",
     "drone2": "videos/danger1.mp4"
 }
@@ -178,12 +178,12 @@ def send_detection_data(frame, people_count):
 
     payload = {
         "cameraId": CAMERA_ID,
-        "eventType": event_type,
-        "eventLevel": event_level,
+        "event_type": event_type,
+        "event_level": event_level,
         "detectedCount": people_count,
         "stayDurationSec": stay_duration_sec,
         "message": message,
-        "eventTime": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "eventTime": int(time.time()),
         "image": image_base64
     }
 
